@@ -15,6 +15,7 @@ async function run() {
         const selfHosted = getInputAsBool('self-hosted');
 
         if (!unityVersion) {
+            console.log('project path :'+ projectPath);
             [unityVersion, unityVersionChangeset] = await findProjectVersion(projectPath);
         } else if (!unityVersionChangeset) {
             unityVersionChangeset = await findVersionChangeset(unityVersion);
@@ -37,24 +38,49 @@ async function run() {
 async function installUnityHub(selfHosted) {
     let unityHubPath = '';
     if (process.platform === 'linux') {
+        unityHubPath = `${process.env.HOME}/UnityHub/UnityHub.AppImage`;
 
-        unityHubPath = `${process.env.HOME}/Unity Hub/UnityHub.AppImage`;
-        if (!fs.existsSync(unityHubPath)) {
-            const installerPath = await tc.downloadTool('https://public-cdn.cloud.unity3d.com/hub/prod/UnityHub.AppImage');
-            await execute(`mkdir -p "${process.env.HOME}/Unity Hub" "${process.env.HOME}/.config/Unity Hub"`);
-            await execute(`mv "${installerPath}" "${unityHubPath}"`);
-            await execute(`chmod +x "${unityHubPath}"`);
-            await execute(`touch "${process.env.HOME}/.config/Unity Hub/eulaAccepted"`);
-            try {
-                await execute('apt-get update', { sudo: !selfHosted });
-                await execute('apt-get install -y libgconf-2-4 libglu1 libasound2 libgtk2.0-0 libgtk-3-0 libnss3 zenity xvfb', { sudo: !selfHosted });
-            } catch {
-                // skip 'command not found' error
-            }
+        // Ensure the Unity Hub directory exists
+        await execute(`mkdir -p "${process.env.HOME}/UnityHub" "${process.env.HOME}/.config/Unity Hub"`);
+
+        // Download the AppImage
+        const installerPath = await tc.downloadTool('https://public-cdn.cloud.unity3d.com/hub/prod/UnityHub.AppImage');
+
+        // Move the AppImage to the Unity Hub directory
+        await execute(`mv "${installerPath}" "${unityHubPath}"`);
+
+        // Install FUSE
+        await execute('sudo apt-get update');
+        await execute('sudo apt-get install -y fuse');
+
+        // Make the AppImage executable
+        await execute(`chmod +x "${unityHubPath}"`);
+
+        try
+        {
+            // Run the AppImage to extract its contents
+            await execute(`${unityHubPath} --appimage-extract`);
+        }
+        catch (error) {
+            console.error('Error during AppImage extraction:', error);
+            throw new Error('Failed to extract Unity Hub AppImage');
+        }
+
+        // Make sure the extracted binary is executable
+        await execute(`chmod +x "${unityHubPath}"`);
+
+        // Use the extracted binary instead of the AppImage
+        //unityHubPath = extractedHubPath;
+
+        try {
+            await execute('apt-get update', { sudo: !selfHosted });
+            await execute('apt-get install -y libgconf-2-4 libglu1 libasound2 libgtk2.0-0 libgtk-3-0 libnss3 zenity xvfb', { sudo: !selfHosted });
+        } catch (error) {
+            // Log the error but continue
+            core.error(error);
         }
 
     } else if (process.platform === 'darwin') {
-
         unityHubPath = '/Applications/Unity Hub.app/Contents/MacOS/Unity Hub';
         if (!fs.existsSync(unityHubPath)) {
             const installerPath = await tc.downloadTool('https://public-cdn.cloud.unity3d.com/hub/prod/UnityHubSetup.dmg');
@@ -66,7 +92,6 @@ async function installUnityHub(selfHosted) {
         }
 
     } else if (process.platform === 'win32') {
-
         unityHubPath = 'C:/Program Files/Unity Hub/Unity Hub.exe';
         if (!fs.existsSync(unityHubPath)) {
             const installerPath = await tc.downloadTool('https://public-cdn.cloud.unity3d.com/hub/prod/UnityHubSetup.exe');
@@ -74,8 +99,10 @@ async function installUnityHub(selfHosted) {
             await execute(`del "${installerPath}"`);
         }
 
+    } else {
+        throw new Error('Unknown platform');
     }
-    else throw new Error('Unknown plarform');
+
     return unityHubPath;
 }
 
